@@ -756,9 +756,8 @@ void SparkDisplayControl::update(bool isInitBoot) {
     WebUI::pushDisplay(primaryLineText.c_str(),
                    secondaryLineText.c_str(),
                    0,
-                   ic,
-                   SparkPresetControl::getInstance().pendingBank(),
-                   SparkPresetControl::getInstance().activePresetNum());
+                   ic);
+
 
 }
 

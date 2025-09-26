@@ -2,129 +2,139 @@
 
 #include <WiFi.h>
 #include <LittleFS.h>
+#include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
-#include <ArduinoJson.h>
 
-// --------------------
-// statics (internal)
-// --------------------
-namespace {
-  AsyncWebServer server(80);
-  AsyncWebSocket ws("/ws");
+// ----------------- static state -----------------
+static AsyncWebServer server(80);
 
-  WebUI::ButtonHandler     g_btnHandler   = nullptr;
-  WebUI::PresetHandler     g_presetHandler= nullptr;
-  WebUI::ParameterHandler  g_paramHandler = nullptr;
+// Handlers set by the app
+static WebUI::ButtonHandler s_onButton;
+static WebUI::PresetHandler s_onPreset;
+static WebUI::ParamHandler  s_onParam;
 
-  // Send a small hello when a client connects so UI can show status
-  void sendHello(AsyncWebSocketClient* client) {
-    StaticJsonDocument<128> doc;
-    doc["hello"] = "ignitron";
-    String json; serializeJson(doc, json);
-    client->text(json);
-  }
+// UI state that /state returns
+static String s_line0, s_line1;
+static int    s_cursor   = 0;
+static bool   s_bt       = false;
+static int    s_battery  = -1;
+static int    s_bank     = -1;
+static int    s_preset   = -1;
 
-  void onWsEvent(AsyncWebSocket * /*server*/,
-                 AsyncWebSocketClient *client,
-                 AwsEventType type,
-                 void *arg, uint8_t *data, size_t len) {
+// ----------------- helpers -----------------
+static void sendJsonState(AsyncWebServerRequest* request) {
+  StaticJsonDocument<256> doc;
+  doc["line0"]  = s_line0;
+  doc["line1"]  = s_line1;
+  doc["cursor"] = s_cursor;
+  doc["bt"]     = s_bt ? 1 : 0;
+  doc["bat"]    = s_battery;
+  if (s_bank   >= 0) doc["bank"]   = s_bank;
+  if (s_preset >= 0) doc["preset"] = s_preset;
 
-    if (type == WS_EVT_CONNECT) {
-      sendHello(client);
-      return;
-    }
+  String out;
+  serializeJson(doc, out);
+  request->send(200, "application/json", out);
+}
 
-    if (type != WS_EVT_DATA) return;
+void WebUI::buildRoutes() {
+  // Serve /data as root, with index.html as default
+  server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 
-    AwsFrameInfo *info = reinterpret_cast<AwsFrameInfo*>(arg);
-    if (!info || info->final != 1 || info->index != 0 || info->len != len || info->opcode != WS_TEXT) {
-      return;
-    }
+  // REST: /state → JSON
+  server.on("/state", HTTP_GET, [](AsyncWebServerRequest* req) {
+    sendJsonState(req);
+  });
 
-    // Parse one JSON action
-    StaticJsonDocument<256> doc;
-    DeserializationError err = deserializeJson(doc, data, len);
-    if (err) {
-      // ignore malformed messages
-      return;
-    }
-
-    const char* action = doc["action"] | "";
-    if (strcmp(action, "button") == 0) {
-      int id = doc["id"] | 0;
-      if (g_btnHandler) g_btnHandler(id);
-      return;
-    }
-
-    if (strcmp(action, "preset") == 0) {
-      int bank = doc["bank"] | -1;
-      int slot = doc["slot"] | -1;
-      if (bank >= 0 && slot >= 0 && g_presetHandler) g_presetHandler(bank, slot);
-      return;
-    }
-
-    if (strcmp(action, "param") == 0) {
-      const char* name = doc["name"] | "";
-      float value = doc["value"] | 0.0f;
-      if (name[0] && g_paramHandler) g_paramHandler(String(name), value);
-      return;
-    }
-  }
-} // namespace
-
-// --------------------
-// WebUI public API
-// --------------------
-
-void WebUI::begin() {
-  // Serve root (index.html) and everything under /
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    if (LittleFS.exists("/index.html")) {
-      request->send(LittleFS, "/index.html", "text/html");
+  // REST: /btn?num=#
+  server.on("/btn", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (req->hasParam("num")) {
+      int num = req->getParam("num")->value().toInt();
+      if (s_onButton) s_onButton(num);
+      req->send(200, "text/plain", "OK");
     } else {
-      request->send(200, "text/plain", "Ignitron WebUI: /data/index.html not found. Upload LittleFS.");
+      req->send(400, "text/plain", "Missing ?num");
     }
   });
 
-  // Allow static assets (css/js) if you add them later
-  server.serveStatic("/", LittleFS, "/");
+  // REST: /preset?bank=X&slot=Y
+  server.on("/preset", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (req->hasParam("bank") && req->hasParam("slot")) {
+      int bank = req->getParam("bank")->value().toInt();
+      int slot = req->getParam("slot")->value().toInt();
+      if (s_onPreset) s_onPreset(bank, slot);
+      req->send(200, "text/plain", "OK");
+    } else {
+      req->send(400, "text/plain", "Missing ?bank and/or ?slot");
+    }
+  });
 
-  // WebSocket
-  ws.onEvent(onWsEvent);
-  server.addHandler(&ws);
+  // REST: /param?name=Gain&value=0.73
+  server.on("/param", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (req->hasParam("name") && req->hasParam("value")) {
+      String name  = req->getParam("name")->value();
+      float  value = req->getParam("value")->value().toFloat();
+      if (s_onParam) s_onParam(name, value);
+      req->send(200, "text/plain", "OK");
+    } else {
+      req->send(400, "text/plain", "Missing ?name and/or ?value");
+    }
+  });
 
+  // Fallback
+  server.onNotFound([](AsyncWebServerRequest* req) {
+    req->send(404, "text/plain", "Not found");
+  });
+}
+
+void WebUI::begin() {
+  if (!LittleFS.begin(true)) {
+    Serial.println("[WebUI] LittleFS mount FAILED");
+  } else {
+    Serial.println("[WebUI] LittleFS mounted");
+  }
+
+  // Simple AP for now so it "just works"
+  WiFi.mode(WIFI_AP);
+  const char* ssid = "Ignitron-AP";
+  const char* pass = "ignitron123";
+  if (WiFi.softAP(ssid, pass)) {
+    Serial.printf("[WebUI] AP started: SSID=%s  PASS=%s  IP=%s\n",
+                  ssid, pass, WiFi.softAPIP().toString().c_str());
+  } else {
+    Serial.println("[WebUI] softAP failed!");
+  }
+
+  buildRoutes();
   server.begin();
+  Serial.println("[WebUI] HTTP server started");
 }
 
 void WebUI::loop() {
-  // Async server has no loop requirement; keep for potential future polling
+  // nothing needed for AsyncWebServer
 }
 
-void WebUI::setHandlers(ButtonHandler btn,
-                        PresetHandler  preset,
-                        ParameterHandler param) {
-  g_btnHandler    = btn;
-  g_presetHandler = preset;
-  g_paramHandler  = param;
+void WebUI::setHandlers(ButtonHandler onButton,
+                        PresetHandler onPreset,
+                        ParamHandler  onParam) {
+  s_onButton = onButton;
+  s_onPreset = onPreset;
+  s_onParam  = onParam;
 }
 
 void WebUI::pushDisplay(const char* line0,
                         const char* line1,
                         int cursor,
-                        const Icons& ic,
-                        int bank,
-                        int preset) {
-  StaticJsonDocument<320> doc;
-  doc["line0"]  = line0 ? line0 : "";
-  doc["line1"]  = line1 ? line1 : "";
-  doc["cursor"] = cursor;
-  doc["bt"]     = ic.bluetooth;
-  doc["bat"]    = ic.battery;
-  if (bank   >= 0) doc["bank"]   = bank;
-  if (preset >= 0) doc["preset"] = preset;
+                        const WebUI::Icons& ic) {
+  s_line0   = line0 ? line0 : "";
+  s_line1   = line1 ? line1 : "";
+  s_cursor  = cursor;
+  s_bt      = ic.bluetooth;
+  s_battery = ic.battery;
+}
 
-  String json;
-  serializeJson(doc, json);
-  ws.textAll(json);
+void WebUI::pushBankPreset(int bank, int preset) {
+  s_bank   = bank;
+  s_preset = preset;
 }

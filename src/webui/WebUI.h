@@ -4,31 +4,30 @@
 
 class WebUI {
 public:
-    struct Icons {
-        bool bluetooth = false;
-        int  battery   = -1;   // -1 = unknown / not available
-    };
+  struct Icons {
+    bool bluetooth = false;   // 1 = connected, 0 = not
+    int  battery   = -1;      // -1 = unknown, else 0..100 (or enum mapping)
+  };
 
-    // Start HTTP + WebSocket server (serve /index.html out of LittleFS and /ws socket)
-    static void begin();
+  using ButtonHandler = std::function<void(int)>;
+  using PresetHandler = std::function<void(int,int)>;
+  using ParamHandler  = std::function<void(const String&, float)>;
 
-    // For AsyncWebServer nothing is needed here, but we keep it for symmetry
-    static void loop();
+  static void begin();  // sets up WiFi AP + HTTP routes, serves /data/index.html
+  static void loop();   // currently no-op; keep for symmetry
 
-    // Push a display update to all connected browser clients
-    static void pushDisplay(const char* line0,
-                            const char* line1,
-                            int cursor,
-                            const Icons& ic,
-                            int bank   = -1,
-                            int preset = -1);
+  static void setHandlers(ButtonHandler onButton,
+                          PresetHandler onPreset,
+                          ParamHandler  onParam);
 
-    // Handlers the firmware can supply so browser actions control the pedal
-    using ButtonHandler    = std::function<void(int)>;
-    using PresetHandler    = std::function<void(int,int)>;
-    using ParameterHandler = std::function<void(const String&, float)>;
+  // Mirror device → browser
+  static void pushDisplay(const char* line0,
+                          const char* line1,
+                          int cursor,
+                          const WebUI::Icons& ic);
 
-    static void setHandlers(ButtonHandler btn,
-                            PresetHandler  preset,
-                            ParameterHandler param);
+  static void pushBankPreset(int bank, int preset);
+
+private:
+  static void buildRoutes();
 };

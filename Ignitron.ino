@@ -45,30 +45,31 @@ OperationMode operationMode = SPARK_MODE_APP;
 /////////////////////////////////////////////////////////
 
 void setup() {
-
     Serial.begin(115200);
-    while (!Serial)
-        ;
+    delay(2000); // allow serial to come up
+    Serial.println("=== Boot starting ===");
 
-    Serial.println("Initializing");
     if (!LittleFS.begin(true)) {
-        Serial.println("LittleFS Mount failed");
-        return;
+        Serial.println("❌ LittleFS Mount failed");
+        ESP.restart();
     }
+    Serial.println("✅ LittleFS mounted");
+
+    // Button + Data control init
     spark_bh.setDataControl(&spark_dc);
     operationMode = spark_bh.checkBootOperationMode();
 
-    // --- Amp Mode toggle on GPIO35 ---   //mk
+    // Amp mode toggle on GPIO34
     pinMode(AMP_MODE_SWITCH_PIN, INPUT);  // external pull-up to 3.3V
     int _ampToggleState = digitalRead(AMP_MODE_SWITCH_PIN);  // HIGH=open, LOW=closed
     if (_ampToggleState == LOW) {
-        operationMode = SPARK_MODE_AMP;   // force Amp Mode
+        operationMode = SPARK_MODE_AMP;
         Serial.println("Amp toggle ON → forcing AMP mode");
     } else {
         Serial.println("Amp toggle OFF → normal boot");
     }
 
-    // Setting operation mode before initializing
+    // Init Spark data control
     operationMode = spark_dc.init(operationMode);
     spark_bh.configureButtons();
     Serial.printf("Operation mode: %d\n", operationMode);
@@ -94,19 +95,25 @@ void setup() {
     Serial.println("Initialization done.");
 
     // === Start Web UI ===
+    Serial.println("Starting WebUI...");
     WebUI::begin();
 
     WebUI::setHandlers(
       [](int btn) {
-        spark_bh.handleButton(btn);   // or whatever the real method name is
+        Serial.printf("[WebUI] virtual button %d\n", btn);
+        // spark_bh.readButtons() is polled in loop, no direct handler available
       },
       [](int bank, int slot) {
-        SparkPresetControl::selectPreset(bank, slot);
+        Serial.printf("[WebUI] bank=%d slot=%d\n", bank, slot);
+        SparkPresetControl::getInstance().switchPreset(bank, slot);
       },
       [](const String& name, float value) {
-        setParameterByName(name.c_str(), value);
+        Serial.printf("[WebUI] tweak %s = %.3f\n", name.c_str(), value);
+        // Hook into parameter system if you want
       }
     );
+
+    Serial.println("✅ Setup complete");
 }
 
 
