@@ -6,6 +6,7 @@
  */
 
 #include "SparkDisplayControl.h"
+#include "webui/WebUI.h"
 
 const int SparkDisplayControl::SCREEN_WIDTH = 128;         // Display width
 const int SparkDisplayControl::SCREEN_HEIGHT = 64;         // Display height
@@ -738,28 +739,30 @@ void SparkDisplayControl::update(bool isInitBoot) {
         unsigned int now = millis();
         if (now - volumeChangedTimestamp <= showVolumeChangedInterval) {
             showVolumeBar();
-        } else {
-            display_.setTextWrap(false);
-            showConnection();
-
-#ifdef ENABLE_BATTERY_STATUS_INDICATOR
-            showBatterySymbol();
-#endif
-
-            showModeModifier();
-            updateTextPositions();
-            showPresetName();
-            if (subMode == SUB_MODE_LOOP_CONTROL || subMode == SUB_MODE_LOOP_CONFIG) {
-                showLooperTimer();
-            } else {
-                showBankAndPresetNum();
-                showFX_SecondaryName();
-            }
-        }
-    }
+                }  // end else
+    }      // end outer else
     // logDisplay();
     display_.display();
+
+    // === Mirror display state to WebUI ===
+    WebUI::Icons ic;
+    ic.bluetooth = sparkDC_->isAmpConnected() || sparkDC_->isAppConnected();
+#ifdef ENABLE_BATTERY_STATUS_INDICATOR
+    ic.battery = (int)(sparkDC_->batteryLevel());  // map your enum to percent if needed
+#else
+    ic.battery = -1;
+#endif
+
+    WebUI::pushDisplay(primaryLineText.c_str(),
+                   secondaryLineText.c_str(),
+                   0,
+                   ic,
+                   SparkPresetControl::getInstance().pendingBank(),
+                   SparkPresetControl::getInstance().activePresetNum());
+
 }
+
+
 
 void SparkDisplayControl::updateTextPositions() {
     // This is for the primary preset name line

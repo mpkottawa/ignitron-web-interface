@@ -12,6 +12,7 @@
 #include "src/SparkDisplayControl.h"
 #include "src/SparkLEDControl.h"
 #include "src/SparkPresetControl.h"
+#include "webui/WebUI.h"
 
 #ifndef AMP_MODE_SWITCH_PIN
 #define AMP_MODE_SWITCH_PIN 34    // <- change to the GPIO you wired; SPST to GND
@@ -54,7 +55,6 @@ void setup() {
         Serial.println("LittleFS Mount failed");
         return;
     }
-    // spark_dc = new SparkDataControl();
     spark_bh.setDataControl(&spark_dc);
     operationMode = spark_bh.checkBootOperationMode();
 
@@ -67,7 +67,6 @@ void setup() {
     } else {
         Serial.println("Amp toggle OFF → normal boot");
     }
-
 
     // Setting operation mode before initializing
     operationMode = spark_dc.init(operationMode);
@@ -89,13 +88,27 @@ void setup() {
     sparkDisplay.setDataControl(&spark_dc);
     spark_dc.setDisplayControl(&sparkDisplay);
     sparkDisplay.init(operationMode);
-    // Assigning data control to buttons;
     spark_bh.setDataControl(&spark_dc);
-    // Initializing control classes
     spark_led.setDataControl(&spark_dc);
 
     Serial.println("Initialization done.");
+
+    // === Start Web UI ===
+    WebUI::begin();
+
+    WebUI::setHandlers(
+      [](int btn) {
+        handleButtonPress(btn);  // use your existing button handler
+      },
+      [](int bank, int slot) {
+        SparkPresetControl::selectPreset(bank, slot);
+      },
+      [](const String& name, float value) {
+        setParameterByName(name.c_str(), value);
+      }
+    );
 }
+
 
 void loop() {
     handleSerialCommands();   // mk it will react to LISTPRESETS
@@ -138,6 +151,9 @@ void loop() {
     spark_led.updateLEDs();
     // Update display
     sparkDisplay.update();
+    
+    WebUI::loop();
+
 }
 
 
