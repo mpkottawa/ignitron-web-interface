@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ignitron WebUI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      background: #111;
+      color: #eee;
+      font-family: monospace, sans-serif;
+      text-align: center;
+      margin: 0;
+      padding: 1rem;
+    }
+    #panel {
+      display: inline-block;
+      border: 2px solid #555;
+      border-radius: 12px;
+      padding: 1rem 2rem;
+      background: #222;
+    }
+    .line {
+      font-size: 1.5rem;
+      margin: 0.5rem 0;
+    }
+    .status {
+      margin-top: 1rem;
+      font-size: 1rem;
+    }
+    .led {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      margin: 0 6px;
+      background: #444;
+    }
+    .on { background: limegreen; }
+    .off { background: #333; }
+    button {
+      margin: 0.25rem;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 1rem;
+      background: #444;
+      color: #fff;
+    }
+    button:hover { background: #666; }
+    select {
+      margin: 0.25rem;
+      padding: 0.25rem 0.5rem;
+      font-size: 1rem;
+      border-radius: 6px;
+      background: #333;
+      color: #eee;
+    }
+  </style>
+</head>
+<body>
+  <h1>Ignitron Web Interface</h1>
+
+  <div id="panel">
+    <div id="line0" class="line">---</div>
+    <div id="line1" class="line">---</div>
+
+    <div class="status">
+      Bank: <span id="bank">--</span> /
+      Preset: <span id="preset">--</span>
+    </div>
+
+    <div class="status">
+      <span>BT:</span>
+      <span id="bt" class="led off"></span>
+      <span>Battery:</span>
+      <span id="bat">--</span>
+    </div>
+  </div>
+
+  <div style="margin-top:1rem;">
+    <button onclick="sendBtn(0)">Btn 1</button>
+    <button onclick="sendBtn(1)">Btn 2</button>
+    <button onclick="sendBtn(2)">Btn 3</button>
+    <button onclick="sendBtn(3)">Btn 4</button>
+  </div>
+
+  <div style="margin-top:1rem;">
+    <label for="bankSel">Bank:</label>
+    <select id="bankSel"></select>
+
+    <label for="presetSel">Preset:</label>
+    <select id="presetSel"></select>
+
+    <button onclick="applyPreset()">Load</button>
+  </div>
+
+  <script>
+    let lastState = {};
+
+    async function fetchState() {
+      try {
+        const res = await fetch("/state");
+        const data = await res.json();
+        lastState = data;
+
+        document.getElementById("line0").textContent = data.line0 || "";
+        document.getElementById("line1").textContent = data.line1 || "";
+        document.getElementById("bank").textContent = data.bank ?? "--";
+        document.getElementById("preset").textContent = data.preset ?? "--";
+        document.getElementById("bat").textContent = data.bat >= 0 ? data.bat : "--";
+
+        document.getElementById("bt").className = "led " + (data.bt ? "on" : "off");
+
+        updateSelectors(data.bank, data.preset);
+      } catch (e) {
+        console.error("Failed to fetch state", e);
+      }
+    }
+
+    function sendBtn(num) {
+      fetch(`/btn?num=${num}`).catch(console.error);
+    }
+
+    function updateSelectors(bank, preset) {
+      const bankSel = document.getElementById("bankSel");
+      const presetSel = document.getElementById("presetSel");
+
+      if (bankSel.options.length === 0) {
+        for (let i = 0; i < 10; i++) {
+          const opt = document.createElement("option");
+          opt.value = i;
+          opt.textContent = i;
+          bankSel.appendChild(opt);
+        }
+      }
+
+      if (presetSel.options.length === 0) {
+        for (let i = 0; i < 4; i++) {
+          const opt = document.createElement("option");
+          opt.value = i;
+          opt.textContent = i;
+          presetSel.appendChild(opt);
+        }
+      }
+
+      if (bank !== undefined) bankSel.value = bank;
+      if (preset !== undefined) presetSel.value = preset;
+    }
+
+    function applyPreset() {
+      const bank = document.getElementById("bankSel").value;
+      const preset = document.getElementById("presetSel").value;
+
+      fetch(`/preset?bank=${bank}&slot=${preset}`)
+        .then(() => console.log("Preset change sent"))
+        .catch(console.error);
+    }
+
+    setInterval(fetchState, 1000);
+    fetchState();
+  </script>
+</body>
+</html>

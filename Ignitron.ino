@@ -98,7 +98,7 @@ void setup() {
 
     WebUI::setHandlers(
       [](int btn) {
-        handleButtonPress(btn);  // use your existing button handler
+        spark_bh.handleButton(btn);   // or whatever the real method name is
       },
       [](int bank, int slot) {
         SparkPresetControl::selectPreset(bank, slot);
